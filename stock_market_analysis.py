@@ -38,21 +38,25 @@ def save_to_csv(df, filename=None):
         df.to_csv(filename, index=False, encoding='utf-8-sig')
     
     return filename
-
 def load_recent_data(days=60, filename_pattern="market_activity_*.csv"):
-    """加载最近N天的数据"""
-    # 查找最新的数据文件
+    """加载最近N天的数据（修复版本）"""
     csv_files = [f for f in os.listdir('.') if f.startswith('market_activity_') and f.endswith('.csv')]
     
     if not csv_files:
         return None
     
-    # 按修改时间排序，获取最新的文件
     latest_file = max(csv_files, key=os.path.getmtime)
     
     try:
         df = pd.read_csv(latest_file)
+        
+        # 确保日期列正确转换[7](@ref)
         df['date'] = pd.to_datetime(df['date'])
+        
+        # 处理数值数据：移除百分比符号并转换为数值
+        df['value'] = df['value'].astype(str).str.replace('%', '')
+        # 使用to_numeric安全转换，错误值设为NaN[8](@ref)
+        df['value'] = pd.to_numeric(df['value'], errors='coerce')
         
         # 获取最近N天的数据
         cutoff_date = datetime.now() - timedelta(days=days)
@@ -115,12 +119,12 @@ def create_visualizations(df, days=60):
     plt.close()
     
     return plot_filename
-
 def analyze_market_sentiment(df):
-    """分析市场情绪"""
+    """分析市场情绪（修复版本）"""
     if df is None or df.empty:
         return None
     
+    # 确保使用最新数据
     latest_data = df[df['date'] == df['date'].max()]
     
     analysis = {
@@ -133,36 +137,55 @@ def analyze_market_sentiment(df):
     }
     
     try:
-        # 计算总股票数量（上涨+下跌+平盘+停牌）
-        rise = latest_data[latest_data['item'] == '上涨']['value'].values
-        fall = latest_data[latest_data['item'] == '下跌']['value'].values
-        flat = latest_data[latest_data['item'] == '平盘']['value'].values
-        suspension = latest_data[latest_data['item'] == '停牌']['value'].values
+        # 首先确保数据类型正确
+        # 将数值列从字符串转换为浮点数[6](@ref)[8](@ref)
+        for col in ['value']:
+            if col in latest_data.columns:
+                # 移除百分比符号并转换为数值
+                latest_data.loc[:, 'value'] = latest_data['value'].astype(str).str.replace('%', '').astype(float)
         
-        total = rise + fall + flat + suspension
-        analysis['total_stocks'] = total
-        analysis['rise_ratio'] = round(rise / total * 100, 2)
+        # 分别提取各项数据
+        rise_data = latest_data[latest_data['item'] == '上涨']['value']
+        fall_data = latest_data[latest_data['item'] == '下跌']['value']
+        flat_data = latest_data[latest_data['item'] == '平盘']['value']
+        suspension_data = latest_data[latest_data['item'] == '停牌']['value']
         
-        # 获取活跃度
-        activity = latest_data[latest_data['item'] == '活跃度']['value'].values
-        analysis['activity_level'] = activity
+        # 确保数据不为空再进行计算
+        if not rise_data.empty and not fall_data.empty and not flat_data.empty and not suspension_data.empty:
+            rise = float(rise_data.iloc
+            fall = float(fall_data.iloc
+            flat = float(flat_data.iloc
+            suspension = float(suspension_data.iloc
+            
+            total = rise + fall + flat + suspension
+            analysis['total_stocks'] = total
+            analysis['rise_ratio'] = round(rise / total * 100, 2) if total > 0 else 0
+        
+        # 获取活跃度（处理百分比）
+        activity_data = latest_data[latest_data['item'] == '活跃度']['value']
+        if not activity_data.empty:
+            analysis['activity_level'] = float(activity_data.iloc
         
         # 获取涨停家数
-        limit_up = latest_data[latest_data['item'] == '真实涨停']['value'].values
-        analysis['limit_up_count'] = limit_up
+        limit_up_data = latest_data[latest_data['item'] == '真实涨停']['value']
+        if not limit_up_data.empty:
+            analysis['limit_up_count'] = float(limit_up_data.iloc
         
-        # 判断市场情绪
-        if analysis['rise_ratio'] > 60 and limit_up > 50:
+        # 基于修复后的数据判断市场情绪
+        if analysis['rise_ratio'] > 60 and analysis['limit_up_count'] > 50:
             analysis['sentiment'] = '强势看多'
-        elif analysis['rise_ratio'] > 50 and limit_up > 30:
+        elif analysis['rise_ratio'] > 50 and analysis['limit_up_count'] > 30:
             analysis['sentiment'] = '温和看多'
-        elif analysis['rise_ratio'] < 40 and limit_up < 20:
+        elif analysis['rise_ratio'] < 40 and analysis['limit_up_count'] < 20:
             analysis['sentiment'] = '谨慎看空'
         else:
             analysis['sentiment'] = '中性震荡'
             
     except Exception as e:
         print(f"分析市场情绪时出错: {e}")
+        # 打印详细错误信息便于调试
+        import traceback
+        traceback.print_exc()
     
     return analysis
 

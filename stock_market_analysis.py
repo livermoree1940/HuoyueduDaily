@@ -1,0 +1,207 @@
+# stock_market_analysis.py
+import akshare as ak
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+from datetime import datetime, timedelta
+import os
+import numpy as np
+
+# 设置中文字体
+plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+
+def fetch_market_activity_data():
+    """获取赚钱效应分析数据"""
+    try:
+        df = ak.stock_market_activity_legu()
+        return df
+    except Exception as e:
+        print(f"获取数据失败: {e}")
+        return None
+
+def save_to_csv(df, filename=None):
+    """保存数据到CSV文件"""
+    if filename is None:
+        filename = f"market_activity_{datetime.now().strftime('%Y%m%d')}.csv"
+    
+    # 添加时间戳
+    df['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    df['date'] = datetime.now().strftime('%Y-%m-%d')
+    
+    # 如果文件已存在，则追加数据
+    if os.path.exists(filename):
+        existing_df = pd.read_csv(filename)
+        combined_df = pd.concat([existing_df, df], ignore_index=True)
+        combined_df.to_csv(filename, index=False, encoding='utf-8-sig')
+    else:
+        df.to_csv(filename, index=False, encoding='utf-8-sig')
+    
+    return filename
+
+def load_recent_data(days=60, filename_pattern="market_activity_*.csv"):
+    """加载最近N天的数据"""
+    # 查找最新的数据文件
+    csv_files = [f for f in os.listdir('.') if f.startswith('market_activity_') and f.endswith('.csv')]
+    
+    if not csv_files:
+        return None
+    
+    # 按修改时间排序，获取最新的文件
+    latest_file = max(csv_files, key=os.path.getmtime)
+    
+    try:
+        df = pd.read_csv(latest_file)
+        df['date'] = pd.to_datetime(df['date'])
+        
+        # 获取最近N天的数据
+        cutoff_date = datetime.now() - timedelta(days=days)
+        recent_df = df[df['date'] >= cutoff_date].copy()
+        
+        return recent_df
+    except Exception as e:
+        print(f"加载数据失败: {e}")
+        return None
+
+def create_visualizations(df, days=60):
+    """创建三种指标的折线图"""
+    if df is None or df.empty:
+        print("没有可用的数据进行可视化")
+        return
+    
+    # 确保数据按日期排序
+    df = df.sort_values('date')
+    
+    # 创建三个子图
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 15))
+    
+    # 1. 活跃度折线图
+    activity_data = df[df['item'] == '活跃度'].copy()
+    if not activity_data.empty:
+        activity_data['value'] = activity_data['value'].str.rstrip('%').astype(float)
+        ax1.plot(activity_data['date'], activity_data['value'], 
+                marker='o', linewidth=2, markersize=4, color='#FF6B6B')
+        ax1.set_title(f'近{days}天市场活跃度变化趋势', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('活跃度 (%)')
+        ax1.grid(True, alpha=0.3)
+        ax1.tick_params(axis='x', rotation=45)
+    
+    # 2. 上涨家数折线图
+    rise_data = df[df['item'] == '上涨'].copy()
+    if not rise_data.empty:
+        ax2.plot(rise_data['date'], rise_data['value'], 
+                marker='s', linewidth=2, markersize=4, color='#4ECDC4')
+        ax2.set_title(f'近{days}天上涨家数变化趋势', fontsize=14, fontweight='bold')
+        ax2.set_ylabel('上涨家数')
+        ax2.grid(True, alpha=0.3)
+        ax2.tick_params(axis='x', rotation=45)
+    
+    # 3. 涨停家数折线图（真实涨停）
+    limit_up_data = df[df['item'] == '真实涨停'].copy()
+    if not limit_up_data.empty:
+        ax3.plot(limit_up_data['date'], limit_up_data['value'], 
+                marker='^', linewidth=2, markersize=4, color='#45B7D1')
+        ax3.set_title(f'近{days}天真实涨停家数变化趋势', fontsize=14, fontweight='bold')
+        ax3.set_ylabel('涨停家数')
+        ax3.set_xlabel('日期')
+        ax3.grid(True, alpha=0.3)
+        ax3.tick_params(axis='x', rotation=45)
+    
+    plt.tight_layout()
+    
+    # 保存图片
+    plot_filename = f'market_activity_trends_{days}days.png'
+    plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    return plot_filename
+
+def analyze_market_sentiment(df):
+    """分析市场情绪"""
+    if df is None or df.empty:
+        return None
+    
+    latest_data = df[df['date'] == df['date'].max()]
+    
+    analysis = {
+        'date': df['date'].max().strftime('%Y-%m-%d'),
+        'total_stocks': 0,
+        'rise_ratio': 0,
+        'activity_level': 0,
+        'limit_up_count': 0,
+        'sentiment': '中性'
+    }
+    
+    try:
+        # 计算总股票数量（上涨+下跌+平盘+停牌）
+        rise = latest_data[latest_data['item'] == '上涨']['value'].values
+        fall = latest_data[latest_data['item'] == '下跌']['value'].values
+        flat = latest_data[latest_data['item'] == '平盘']['value'].values
+        suspension = latest_data[latest_data['item'] == '停牌']['value'].values
+        
+        total = rise + fall + flat + suspension
+        analysis['total_stocks'] = total
+        analysis['rise_ratio'] = round(rise / total * 100, 2)
+        
+        # 获取活跃度
+        activity = latest_data[latest_data['item'] == '活跃度']['value'].values
+        analysis['activity_level'] = activity
+        
+        # 获取涨停家数
+        limit_up = latest_data[latest_data['item'] == '真实涨停']['value'].values
+        analysis['limit_up_count'] = limit_up
+        
+        # 判断市场情绪
+        if analysis['rise_ratio'] > 60 and limit_up > 50:
+            analysis['sentiment'] = '强势看多'
+        elif analysis['rise_ratio'] > 50 and limit_up > 30:
+            analysis['sentiment'] = '温和看多'
+        elif analysis['rise_ratio'] < 40 and limit_up < 20:
+            analysis['sentiment'] = '谨慎看空'
+        else:
+            analysis['sentiment'] = '中性震荡'
+            
+    except Exception as e:
+        print(f"分析市场情绪时出错: {e}")
+    
+    return analysis
+
+def main():
+    """主函数"""
+    print("开始获取赚钱效应分析数据...")
+    
+    # 获取当前数据
+    df = fetch_market_activity_data()
+    if df is not None:
+        print("数据获取成功!")
+        print(df)
+        
+        # 保存数据
+        csv_file = save_to_csv(df)
+        print(f"数据已保存到: {csv_file}")
+        
+        # 加载最近60天数据
+        recent_df = load_recent_data(60)
+        
+        if recent_df is not None:
+            # 创建可视化图表
+            plot_file = create_visualizations(recent_df, 60)
+            print(f"可视化图表已保存到: {plot_file}")
+            
+            # 分析市场情绪
+            analysis = analyze_market_sentiment(recent_df)
+            if analysis:
+                print("\n=== 市场情绪分析 ===")
+                print(f"分析日期: {analysis['date']}")
+                print(f"总股票数量: {analysis['total_stocks']}")
+                print(f"上涨比例: {analysis['rise_ratio']}%")
+                print(f"市场活跃度: {analysis['activity_level']}")
+                print(f"真实涨停家数: {analysis['limit_up_count']}")
+                print(f"市场情绪: {analysis['sentiment']}")
+        else:
+            print("没有足够的历史数据进行可视化分析")
+    else:
+        print("数据获取失败，请检查网络连接或接口状态")
+
+if __name__ == "__main__":
+    main()
